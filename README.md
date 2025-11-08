@@ -37,6 +37,12 @@ sudo paru -S cmake gcc mariadb mariadb-libs
 ```
 ---
 
+## Server Architecture Diagram
+
+![KV-Server Architecture](./kv-server.png)
+
+---
+
 ## Setup Instructions
 
 ### 1. Start MySQL (MariaDB)
