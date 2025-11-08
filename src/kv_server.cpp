@@ -1,4 +1,8 @@
+<<<<<<< HEAD
 #include "DB.hpp" // your MySQLClient class
+=======
+#include "DB.hpp"
+>>>>>>> 47a2e8c (Updating..)
 #include "httplib.h"
 #include <iostream>
 #include <list>
@@ -56,7 +60,11 @@ public:
 // =============== KV Server ===============
 int main() {
   try {
+<<<<<<< HEAD
     // ---- 1. Database Config ----
+=======
+    // ---- Database Config ----
+>>>>>>> 47a2e8c (Updating..)
     DBConfig cfg;
     cfg.host = "127.0.0.1";
     cfg.port = 3306;
@@ -68,9 +76,15 @@ int main() {
     LRUCache<int, std::string> cache(100); // cache up to 100 items
     httplib::Server svr;
 
+<<<<<<< HEAD
     std::cout << "✅ Connected to MySQL and cache initialized.\n";
 
     // ---- 2. Endpoints ----
+=======
+    std::cout << "Connected to MySQL and cache initialized.\n";
+
+    // ---- Endpoints ----
+>>>>>>> 47a2e8c (Updating..)
 
     // CREATE or UPDATE
     svr.Post("/create",
@@ -146,7 +160,11 @@ int main() {
 
     // LIST
     svr.Get("/list", [&](const httplib::Request &, httplib::Response &res) {
+<<<<<<< HEAD
       MYSQL *conn = db.raw(); // assuming you expose this in MySQLClient
+=======
+      MYSQL *conn = db.raw();
+>>>>>>> 47a2e8c (Updating..)
       if (mysql_query(conn, "SELECT `key`,`value` FROM kv_store") != 0) {
         res.status = 500;
         res.set_content(mysql_error(conn), "text/plain");

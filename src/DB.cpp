@@ -8,9 +8,12 @@
 #include <string>
 #include <vector>
 
+<<<<<<< HEAD
 // If your headers don't define my_bool (rare), uncomment the next line:
 // using my_bool = bool;
 
+=======
+>>>>>>> 47a2e8c (Updating..)
 struct MySQLClient::Impl {
   MYSQL *conn = nullptr;
 
@@ -18,12 +21,19 @@ struct MySQLClient::Impl {
   MYSQL_STMT *stmt_read = nullptr;
   MYSQL_STMT *stmt_delete = nullptr;
 
+<<<<<<< HEAD
   static void bind_string(MYSQL_BIND &b, std::string &s,
                           unsigned long &len) { //,
                                                 // my_bool is_null = 0) {
     std::memset(&b, 0, sizeof(b));
     b.buffer_type = MYSQL_TYPE_STRING;
     b.buffer = s.data(); // non-const char* in C++17
+=======
+  static void bind_string(MYSQL_BIND &b, std::string &s, unsigned long &len) {
+    std::memset(&b, 0, sizeof(b));
+    b.buffer_type = MYSQL_TYPE_STRING;
+    b.buffer = s.data();
+>>>>>>> 47a2e8c (Updating..)
     len = static_cast<unsigned long>(s.size());
     b.length = &len;
     b.is_null = nullptr; //&is_null;
@@ -50,7 +60,10 @@ MySQLClient::MySQLClient(const DBConfig &cfg) : p_(new Impl()) {
     throw std::runtime_error("mysql_real_connect: " + err);
   }
 
+<<<<<<< HEAD
   // Prepare statements (reused efficiently)
+=======
+>>>>>>> 47a2e8c (Updating..)
   const char *UPSERT_SQL = "INSERT INTO kv_store (`key`,`value`) VALUES(?,?) "
                            "ON DUPLICATE KEY UPDATE `value`=VALUES(`value`)";
   const char *READ_SQL = "SELECT `value` FROM kv_store WHERE `key`=?";
