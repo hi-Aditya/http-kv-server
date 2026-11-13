@@ -24,9 +24,9 @@ constexpr size_t kWriteHigh = 256 * 1024;  // stop parsing new requests while th
 constexpr size_t kShrinkAbove = 64 * 1024;
 char g_listen_tag, g_stop_tag;  // epoll data.ptr sentinels
 
-int64_t now_ms() {
+int64_t clock_ms(clockid_t id) {
   timespec ts;
-  clock_gettime(CLOCK_MONOTONIC, &ts);
+  clock_gettime(id, &ts);
   return ts.tv_sec * 1000 + ts.tv_nsec / 1000000;
 }
 
@@ -81,15 +81,18 @@ EventLoop::~EventLoop() = default;
 
 void EventLoop::run() {
   std::array<epoll_event, 256> evs;
-  const int timeout = std::clamp(opt_.idle_ms / 2, 10, 1000);
-  int64_t last_sweep = now_ = now_ms();
+  const int tick = std::clamp(opt_.idle_ms / 2, 10, 100);        // epoll timeout
+  const int idle_every = std::clamp(opt_.idle_ms / 2, 10, 1000);  // idle-connection sweep period
+  int64_t last_idle = now_ = clock_ms(CLOCK_MONOTONIC), last_ttl = now_;
+  wall_ = clock_ms(CLOCK_REALTIME);
   while (!stopping_) {
-    int n = epoll_wait(ep_.get(), evs.data(), static_cast<int>(evs.size()), timeout);
+    int n = epoll_wait(ep_.get(), evs.data(), static_cast<int>(evs.size()), tick);
     if (n < 0) {
       if (errno == EINTR) continue;
       throw_errno("epoll_wait");
     }
-    now_ = now_ms();
+    now_ = clock_ms(CLOCK_MONOTONIC);
+    wall_ = clock_ms(CLOCK_REALTIME);
     for (int i = 0; i < n; ++i) {
       void* p = evs[static_cast<size_t>(i)].data.ptr;
       uint32_t events = evs[static_cast<size_t>(i)].events;
@@ -97,7 +100,10 @@ void EventLoop::run() {
       else if (p == &g_stop_tag) stopping_ = true;
       else on_conn_event(*static_cast<Conn*>(p), events);  // each conn appears once per batch
     }
-    if (now_ - last_sweep >= timeout) { sweep_idle(); last_sweep = now_; }
+    if (now_ - last_idle >= idle_every) { sweep_idle(); last_idle = now_; }
+    // Active expiry, rate-limited by the monotonic clock so a wall-clock jump cannot stall it:
+    // at most 1024 buckets per 10 ms (~1% of one core on a cold table).
+    if (now_ - last_ttl >= 10) { store_.sweep(wall_, 1024); last_ttl = now_; }
   }
   conns_.clear();
   metrics_.conns_active = 0;
@@ -186,7 +192,7 @@ bool EventLoop::process(Conn& c) {
     if (r.state == http::ParseState::Need) break;
     if (r.state == http::ParseState::Done) {
       ++metrics_.requests;
-      http::handle(store_, metrics_, r.req, c.wbuf);
+      http::handle(store_, metrics_, r.req, wall_, c.wbuf);
       c.rpos += r.consumed;
       if (!r.req.keep_alive) c.close_after = true;
       progressed = true;
