@@ -1,59 +1,37 @@
-cmake_minimum_required(VERSION 3.18)
-project(kvserver CXX)
+cmake_minimum_required(VERSION 3.21)
+project(kvx CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
+  set(CMAKE_BUILD_TYPE RelWithDebInfo)
+endif()
 
-include(FetchContent)
+add_compile_options(-Wall -Wextra -Wpedantic -Wshadow -Wconversion)
 
-# ---- header-only deps ----
-FetchContent_Declare(
-  httplib
-  GIT_REPOSITORY https://github.com/yhirose/cpp-httplib.git
-  GIT_TAG v0.15.3
-)
-FetchContent_MakeAvailable(httplib)
-
-FetchContent_Declare(
-  nlohmann_json
-  GIT_REPOSITORY https://github.com/nlohmann/json.git
-  GIT_TAG v3.11.3
-)
-FetchContent_MakeAvailable(nlohmann_json)
+option(KVX_SANITIZE "address,undefined | thread" "")
+if(KVX_SANITIZE)
+  add_compile_options(-fsanitize=${KVX_SANITIZE} -fno-omit-frame-pointer -O1 -g)
+  add_link_options(-fsanitize=${KVX_SANITIZE})
+endif()
 
 find_package(Threads REQUIRED)
 
-# ---- MySQL client (Arch: mariadb-libs) ----
-# Look for libmysqlclient and headers (usually in /usr/include/mysql)
-find_library(MYSQLCLIENT_LIBRARY NAMES mysqlclient libmysqlclient REQUIRED)
-find_path(MYSQL_INCLUDE_DIR mysql/mysql.h
-  HINTS /usr/include/mysql /usr/local/include/mysql
-  REQUIRED)
+add_library(kvx_core STATIC
+  src/http/http.cpp
+  src/http/handler.cpp
+  src/store/store.cpp
+  src/net/event_loop.cpp)
+target_include_directories(kvx_core PUBLIC src)
+target_link_libraries(kvx_core PUBLIC Threads::Threads)
 
-# ---- your targets ----
-add_executable(kvserver
-  src/kv_server.cpp       # <- make sure this matches your actual filename
-  src/DB.cpp
-  src/util.cpp            # remove if you don't have it
-)
+add_executable(kvx src/main.cpp)
+target_link_libraries(kvx PRIVATE kvx_core)
 
-target_include_directories(kvserver
-  PRIVATE
-    ${PROJECT_SOURCE_DIR}/include   # where DB.hpp & Log.hpp are
-    ${MYSQL_INCLUDE_DIR}            # mysql/mysql.h
-)
-
-target_link_libraries(kvserver
-  PRIVATE
-    httplib::httplib
-    nlohmann_json::nlohmann_json
-    ${MYSQLCLIENT_LIBRARY}
-    Threads::Threads
-)
-
-# Optional: small tool
-add_executable(loadgen tools/loadgen.cpp)
-target_link_libraries(loadgen PRIVATE httplib::httplib nlohmann_json::nlohmann_json Threads::Threads)
-target_include_directories(loadgen PRIVATE ${PROJECT_SOURCE_DIR}/include)
-
+enable_testing()
+add_executable(test_http tests/test_http.cpp)
+target_link_libraries(test_http PRIVATE kvx_core)
+add_test(NAME http_unit COMMAND test_http)
+add_test(NAME functional
+  COMMAND python3 ${CMAKE_SOURCE_DIR}/tests/functional.py $<TARGET_FILE:kvx>)
