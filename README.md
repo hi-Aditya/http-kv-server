@@ -1,117 +1,22 @@
-# KV-Server
+# KVX
 
-A lightweight **HTTP-based Key-Value Store** built in **C++**, backed by **MySQL** for persistence and an **LRU cache** for fast reads.
+A persistent, concurrent HTTP key-value server in C++20 (epoll, sharded store, per-shard WAL).
+Work in progress, built milestone by milestone; see `DECISIONS.md`. Current state: **M1** (event loop + HTTP + in-memory store).
 
-It exposes REST endpoints (`/create`, `/read`, `/update`, `/delete`, `/list`) over HTTP - allowing clients to perform full CRUD operations.
-
----
-
-## Features
-
-- Simple REST API (create, read, update, delete, list)
-- Persistent MySQL backend
-- In-memory LRU cache (for speed)
-- CMake-based build system
-- Clean modular C++20 design
-
----
-
-## Prerequisites
-
-Make sure these are installed (on Arch Linux):
-
+## Build and test
 ```bash
-sudo paru -S cmake gcc mariadb mariadb-libs
+cmake --preset release && cmake --build --preset release
+ctest --preset release                      # parser unit tests + functional tests
+cmake --preset asan && cmake --build --preset asan && ctest --preset asan
+scripts/loc.sh                              # source-size budget check
 ```
----
 
-## Setup Instructions
-
-### 1. Start MySQL (MariaDB)
-
+## Run
 ```bash
-sudo systemctl start mariadb
+build/release/kvx --port 8080 [--bind 127.0.0.1] [--max-conns 4096] [--idle-ms 60000]
+curl -X PUT --data-binary hello localhost:8080/kv/greeting   # 201 new / 200 overwrite
+curl localhost:8080/kv/greeting                              # 200 value / 404
+curl -X DELETE localhost:8080/kv/greeting                    # 204 / 404
+curl localhost:8080/health ; curl localhost:8080/metrics
 ```
-(Optional but recommended on boot:)
-
-```bash
-sudo systemctl enable mariadb
-```
----
-
-### 2. Create the database and table
-
-Launch MySQL:
-
-```bash
-mysql -u root -p
-```
-Then inside MySQL:
-
-```sql
-CREATE DATABASE kv_store;
-USE kv_store;
-
-CREATE TABLE kv_store (
-key VARCHAR(255) PRIMARY KEY,
-value TEXT
-);
-```
----
-
-## Build the Project
-
-From the root directory of the project:
-
-```bash
-mkdir build && cd build
-cmake .. && Make
-```
-This compiles everything and generates:
-
-- `kvserver` → main HTTP key-value server
-- `loadgen` → optional load-testing client
-
----
-
-## Run the Server
-
-```bash
-./kvserver
-```
-If setup is correct, you’ll see:
-
-Connected to MySQL and cache initialized.
-Server running on http://localhost:7000
-
----
-
-## Using the API (via curl)
-
-All endpoints use HTTP query parameters.
-
-### Create
-
-```bash
-curl -X POST "http://127.0.0.1:7000/create?key=1&value=hello"
-```
-### Read
-
-```bash
-curl "http://127.0.0.1:7000/read?key=1"
-```
-### Update
-
-```bash
-curl -X PUT "http://127.0.0.1:7000/update?key=1&value=newvalue"
-```
-### Delete
-
-```bash
-curl -X DELETE "http://127.0.0.1:7000/delete?key=1"
-```
-### List all key-value pairs
-
-```bash
-curl "http://127.0.0.1:7000/list"
-```
+Keys are percent-decoded, 1-256 bytes. Values up to 1 MiB. No chunked requests (501).

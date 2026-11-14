@@ -1,129 +1,85 @@
-#include <atomic>
-#include <cstdlib>
-#include <string>
+#include <signal.h>
+#include <sys/resource.h>
 
-#include "Config.hpp"
-#include "DB.hpp"
-#include "LRUCache.hpp"
-#include "Log.hpp"
+#include <charconv>
+#include <cstdio>
+#include <cstring>
+#include <string_view>
 
-#include <httplib.h>
-#include <nlohmann/json.hpp>
+#include "net/event_loop.hpp"
+#include "util/log.hpp"
 
-extern std::atomic<bool> g_stop;
-extern "C" void handle_sigint(int);
+namespace {
 
-using json = nlohmann::json;
+int g_stop_fd = -1;
 
-int main() {
-  std::signal(SIGINT, handle_sigint);
-  std::signal(SIGTERM, handle_sigint);
+extern "C" void on_signal(int) {
+  uint64_t one = 1;
+  ssize_t r = write(g_stop_fd, &one, sizeof one);  // async-signal-safe; result irrelevant
+  (void)r;
+}
 
-  // Load config
-  Config cfg = Config::load();
+template <class T>
+bool parse_num(const char* s, T& out) {
+  std::string_view v(s);
+  auto [p, ec] = std::from_chars(v.data(), v.data() + v.size(), out);
+  return ec == std::errc{} && p == v.data() + v.size();
+}
 
-  // DB client
-  MySQLClient db({.host = cfg.mysql_host,
-                  .port = cfg.mysql_port,
-                  .user = cfg.mysql_user,
-                  .pass = cfg.mysql_pass,
-                  .db = cfg.mysql_db});
+int usage() {
+  std::fputs("usage: kvx [--bind IPV4] [--port N] [--max-conns N] [--idle-ms N]\n", stderr);
+  return 2;
+}
 
-  // LRU cache
-  LRUCache<std::string, std::string> cache(cfg.cache_capacity);
+}  // namespace
 
-  // HTTP server
-  httplib::Server srv;
+int main(int argc, char** argv) {
+  kvx::Options opt;
+  for (int i = 1; i < argc; i += 2) {
+    std::string_view k = argv[i];
+    if (i + 1 >= argc) return usage();
+    bool ok = false;
+    if (k == "--bind") { opt.bind = argv[i + 1]; ok = true; }
+    else if (k == "--port") ok = parse_num(argv[i + 1], opt.port);
+    else if (k == "--max-conns") ok = parse_num(argv[i + 1], opt.max_conns) && opt.max_conns > 0;
+    else if (k == "--idle-ms") ok = parse_num(argv[i + 1], opt.idle_ms) && opt.idle_ms > 0;
+    if (!ok) return usage();
+  }
 
-  // Middlewares: set JSON content type everywhere
-  srv.set_default_headers(
-      {{"Server", "kvserver/1.0"}, {"Cache-Control", "no-store"}});
-
-  // Health
-  srv.Get("/health", [&](const httplib::Request &, httplib::Response &res) {
-    res.set_content(R"({"ok":true})", "application/json");
-  });
-
-  // CREATE: POST /create  body: {"key":"k", "value":"v"}
-  srv.Post("/create", [&](const httplib::Request &req, httplib::Response &res) {
-    try {
-      auto j = json::parse(req.body);
-      std::string key = j.at("key").get<std::string>();
-      std::string val = j.at("value").get<std::string>();
-      db.upsert(key, val);
-      cache.put(key, val);
-      res.status = 201;
-      res.set_content(R"({"status":"created"})", "application/json");
-    } catch (const std::exception &e) {
-      kvlog::warn("CREATE error: ", e.what());
-      res.status = 400;
-      res.set_content(json({{"error", e.what()}}).dump(), "application/json");
+  // Every connection costs one fd; raise the soft limit to the hard limit if needed.
+  rlimit rl{};
+  const rlim_t need = opt.max_conns + 32;
+  if (getrlimit(RLIMIT_NOFILE, &rl) < 0) { KVX_WARN("getrlimit: %s", std::strerror(errno)); return 1; }
+  if (rl.rlim_cur < need) {
+    rl.rlim_cur = need;
+    if (rl.rlim_cur > rl.rlim_max || setrlimit(RLIMIT_NOFILE, &rl) < 0) {
+      KVX_WARN("--max-conns %zu needs RLIMIT_NOFILE >= %lu", opt.max_conns, static_cast<unsigned long>(need));
+      return 1;
     }
-  });
+  }
 
-  // READ: GET /read?key=k
-  srv.Get("/read", [&](const httplib::Request &req, httplib::Response &res) {
-    auto key = req.get_param_value("key");
-    if (key.empty()) {
-      res.status = 400;
-      res.set_content(R"({"error":"missing key"})", "application/json");
-      return;
-    }
-    if (auto v = cache.get(key)) {
-      res.set_content(
-          json({{"key", key}, {"value", *v}, {"cache_hit", true}}).dump(),
-          "application/json");
-      return;
-    }
-    if (auto vdb = db.read(key)) {
-      cache.put(key, *vdb);
-      res.set_content(
-          json({{"key", key}, {"value", *vdb}, {"cache_hit", false}}).dump(),
-          "application/json");
-    } else {
-      res.status = 404;
-      res.set_content(R"({"error":"not found"})", "application/json");
-    }
-  });
+  try {
+    kvx::Store store;
+    kvx::Metrics metrics;
+    kvx::EventLoop loop(opt, store, metrics);
+    g_stop_fd = loop.stop_fd();
 
-  // UPDATE: PUT /update  body: {"key":"k", "value":"v"}
-  srv.Put("/update", [&](const httplib::Request &req, httplib::Response &res) {
-    try {
-      auto j = json::parse(req.body);
-      std::string key = j.at("key").get<std::string>();
-      std::string val = j.at("value").get<std::string>();
-      db.upsert(key, val);
-      cache.put(key, val);
-      res.set_content(R"({"status":"updated"})", "application/json");
-    } catch (const std::exception &e) {
-      kvlog::warn("UPDATE error: ", e.what());
-      res.status = 400;
-      res.set_content(json({{"error", e.what()}}).dump(), "application/json");
+    struct sigaction sa{};
+    sa.sa_handler = on_signal;
+    sigemptyset(&sa.sa_mask);
+    if (sigaction(SIGINT, &sa, nullptr) < 0 || sigaction(SIGTERM, &sa, nullptr) < 0) {
+      KVX_WARN("sigaction: %s", std::strerror(errno));
+      return 1;
     }
-  });
+    signal(SIGPIPE, SIG_IGN);  // sends also use MSG_NOSIGNAL
 
-  // DELETE: DELETE /delete?key=k
-  srv.Delete(
-      "/delete", [&](const httplib::Request &req, httplib::Response &res) {
-        auto key = req.get_param_value("key");
-        if (key.empty()) {
-          res.status = 400;
-          res.set_content(R"({"error":"missing key"})", "application/json");
-          return;
-        }
-        bool ok = db.remove(key);
-        cache.erase(key);
-        if (ok) {
-          res.set_content(R"({"status":"deleted"})", "application/json");
-        } else {
-          res.status = 404;
-          res.set_content(R"({"error":"not found"})", "application/json");
-        }
-      });
-
-  kvlog::info("Listening on http://", cfg.bind_addr, ":", cfg.port);
-  // Blocking call; break via signal
-  srv.listen(cfg.bind_addr.c_str(), cfg.port);
-  kvlog::info("Server stopped.");
+    std::printf("listening %s:%u\n", opt.bind.c_str(), loop.port());
+    std::fflush(stdout);
+    loop.run();
+    KVX_INFO("shutdown: %lu requests served", static_cast<unsigned long>(metrics.requests));
+  } catch (const std::exception& e) {
+    KVX_WARN("fatal: %s", e.what());
+    return 1;
+  }
   return 0;
 }
