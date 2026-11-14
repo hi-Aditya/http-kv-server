@@ -10,10 +10,10 @@
 namespace kvx {
 
 struct Options {
-  std::string bind = "127.0.0.1";  // IPv4 only
+  std::string bind = "127.0.0.1";  // IPv4
   uint16_t port = 8080;            // 0 = ephemeral (see port())
   size_t max_conns = 4096;         // beyond this: 503 + close
-  int idle_ms = 60000;             // no read/write progress for this long -> close
+  int idle_ms = 60000;             // close when no read/write progress
 };
 
 // Single-threaded, level-triggered epoll server. Why level-triggered: reads are

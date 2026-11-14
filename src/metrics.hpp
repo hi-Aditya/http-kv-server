@@ -4,7 +4,6 @@
 
 namespace kvx {
 
-// M1: plain counters, single-threaded. M3 replaces these with per-thread counters.
 struct Metrics {
   uint64_t requests = 0, bad_requests = 0;
   uint64_t conns_accepted = 0, conns_rejected = 0, conns_idle_closed = 0;

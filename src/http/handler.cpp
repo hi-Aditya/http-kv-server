@@ -32,7 +32,7 @@ bool decode_key(std::string_view in, std::string& buf, std::string_view& key) {
 
 void handle(Store& store, Metrics& metrics, const Request& rq, std::string& out) {
   const bool ka = rq.keep_alive;
-  std::string_view path = rq.target.substr(0, rq.target.find('?'));  // query ignored until M2 (TTL)
+  std::string_view path = rq.target.substr(0, rq.target.find('?'));
 
   if (path == "/health") {
     if (rq.method != Method::Get) return append_response(out, 405, "", ka);

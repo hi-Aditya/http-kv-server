@@ -7,7 +7,6 @@
 
 namespace kvx {
 
-// M1 placeholder: std::unordered_map behind the final interface. M2 replaces the
 // internals (custom hash table, memory cap, eviction, TTL) without touching callers.
 class Store {
  public:

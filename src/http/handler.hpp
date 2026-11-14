@@ -7,7 +7,7 @@
 
 namespace kvx::http {
 
-// Routes one parsed request and appends the full response to `out`.
+// Routes a parsed request and appends full response to `out`.
 void handle(Store& store, Metrics& metrics, const Request& req, std::string& out);
 
 }  // namespace kvx::http

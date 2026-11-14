@@ -27,10 +27,10 @@ struct ParseResult {
 
 // Incremental: call again with more data after Need. Any non-Need/Done state is
 // fatal for the connection. Need is only returned while buf.size() < kMaxHeader
-// + kMaxBody, so a buffer of that size always suffices.
+// + kMaxBody, so a buffer of that size always works.
 ParseResult parse(std::string_view buf);
 
-int status_of(ParseState s);  // HTTP status for a fatal parse state
+int status_of(ParseState s);  // Fatal parse state status
 
 void append_response(std::string& out, int status, std::string_view body, bool keep_alive,
                      std::string_view content_type = "text/plain");
