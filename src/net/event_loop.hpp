@@ -49,7 +49,7 @@ class EventLoop {
   Metrics& metrics_;
   Fd listen_, ep_, stop_, spare_;  // spare_: reserve fd for shedding on EMFILE
   uint16_t port_ = 0;
-  int64_t now_ = 0;
+  int64_t now_ = 0, wall_ = 0;  // monotonic ms (idle/timers); unix ms (TTL)
   bool stopping_ = false;
   std::vector<std::unique_ptr<Conn>> conns_;
 };

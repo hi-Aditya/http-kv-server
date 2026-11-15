@@ -178,12 +178,90 @@ def test_slow_reader():
     check(dead, "stalled client sees the connection closed")
     srv.stop()
 
+
+def metrics(srv):
+    s = srv.conn(); body = request(s, "GET", "/metrics")[2].decode(); s.close()
+    return {m.group(1): int(m.group(2)) for m in re.finditer(r"^(kvx_\w+) (\d+)$", body, re.M)}
+
+def test_ttl():
+    srv = Server()
+    s = srv.conn()
+    for bad in ("ttl=0", "ttl=abc", "ttl=-1", "ttl=1.5", "ttl=", "ttl=99999999999"):
+        check(request(s, "PUT", f"/kv/b?{bad}", b"x")[0] == 400, f"bad {bad} -> 400")
+    check(request(s, "GET", "/kv/b")[0] == 404, "rejected ttl PUT stored nothing")
+    check(request(s, "PUT", "/kv/u?foo=1", b"x")[0] == 201, "unknown query parameter ignored")
+    check(request(s, "PUT", "/kv/e?ttl=1", b"v")[0] == 201 and request(s, "GET", "/kv/e")[2] == b"v", "ttl key readable")
+    request(s, "PUT", "/kv/keep?ttl=1", b"a"); request(s, "PUT", "/kv/keep", b"b")   # plain overwrite clears ttl
+    request(s, "PUT", "/kv/ext?ttl=1", b"a"); request(s, "PUT", "/kv/ext?ttl=60", b"b")
+    base = metrics(srv)["kvx_keys"]
+    check(flood(srv, [(f"sw{i}?ttl=1", b"v") for i in range(2000)]), "2000 ttl puts accepted")
+    time.sleep(1.5)
+    check(request(s, "GET", "/kv/e")[0] == 404, "ttl key gone after expiry (lazy)")
+    check(request(s, "GET", "/kv/keep")[2] == b"b" and request(s, "GET", "/kv/ext")[2] == b"b", "overwrite replaces ttl")
+    m = metrics(srv)   # nothing read sw*: the active sweep must have reclaimed them
+    check(m["kvx_keys"] <= base, f"active sweep reclaimed unread ttl keys (keys={m['kvx_keys']}, base={base})")
+    check(m["kvx_expired_total"] >= 2000, f"expired counter {m['kvx_expired_total']}")
+    srv.stop()
+
+def test_mem_limit_small():
+    srv = Server("--mem-mb", "1")
+    s = srv.conn()
+    check(metrics(srv)["kvx_memory_limit_bytes"] == 1 << 20, "limit reported")
+    check(request(s, "PUT", "/kv/huge", b"x" * MAX_BODY)[0] == 413, "1 MiB value under 1 MiB cap -> 413")
+    check(request(s, "PUT", "/kv/h1", b"a" * 400000)[0] == 201 and request(s, "PUT", "/kv/h2", b"b" * 400000)[0] == 201, "two 400 KB values fit")
+    check(request(s, "PUT", "/kv/h3", b"c" * 400000)[0] == 201, "third value evicts instead of failing")
+    m = metrics(srv)
+    check(m["kvx_evictions_total"] >= 1 and m["kvx_memory_used_bytes"] <= m["kvx_memory_limit_bytes"], "evicted, cap respected")
+    check(request(s, "GET", "/kv/h3")[2] == b"c" * 400000, "newest value present")
+    srv.stop()
+
+def flood(srv, items, batch=200):
+    s = srv.conn(); ok = True
+    for i in range(0, len(items), batch):
+        chunk = items[i:i + batch]
+        s.sendall(b"".join(req_bytes("PUT", f"/kv/{k}", v) for k, v in chunk))
+        buf = b""
+        for _ in chunk:
+            st, _, _, buf = recv_response(s, buf); ok &= st in (200, 201)
+    s.close()
+    return ok
+
+def test_write_flood():
+    import random
+    cap_mb = 16
+    srv = Server("--mem-mb", str(cap_mb))
+    cap = cap_mb << 20
+    # Stated overhead: RSS <= 2x cap + 12 MB (allocator fragmentation under size-churn, connection
+    # buffers, binary). Not asserted under sanitizers: ASan's quarantine inflates RSS.
+    bound_kb = cap * 2 // 1024 + 12 * 1024
+    rng = random.Random(1)
+    filler = b"x" * (1 << 20)
+    def phase(name, items):
+        check(flood(srv, items), f"{name}: all PUTs accepted")
+        m, rss = metrics(srv), srv.rss_kb()
+        check(m["kvx_memory_used_bytes"] <= cap, f"{name}: accounted memory {m['kvx_memory_used_bytes']} <= cap")
+        check(m["kvx_evictions_total"] > 0, f"{name}: evictions happened")
+        if not os.environ.get("KVX_SANITIZED"):
+            check(rss <= bound_kb, f"{name}: RSS {rss/1024:.1f} MB <= bound {bound_kb/1024:.1f} MB")
+        print(f"  {name}: RSS {rss/1024:.1f} MB, accounted {m['kvx_memory_used_bytes']/1048576:.1f} / {cap_mb} MB, "
+              f"keys {m['kvx_keys']}, evictions {m['kvx_evictions_total']}")
+        return m
+    base = srv.rss_kb()
+    phase("1KB flood (60k puts, ~60 MB)", [(f"f{i}", filler[:1024]) for i in range(60000)])
+    sizes = [int(2 ** rng.uniform(4, 16)) for _ in range(6000)] + [rng.randrange(128 << 10, MAX_BODY) for _ in range(40)]
+    rng.shuffle(sizes)
+    phase(f"mixed 16B-1MB flood ({sum(sizes) >> 20} MB)", [(f"m{i}", filler[:n]) for i, n in enumerate(sizes)])
+    s = srv.conn()
+    check(request(s, "GET", f"/kv/m{len(sizes) - 1}")[2] == filler[:sizes[-1]], "most recent value intact after flood")
+    print(f"  baseline RSS before flood: {base/1024:.1f} MB")
+    srv.stop()
+
 def main():
     srv = Server("--idle-ms", "5000")
     for t in (test_semantics, test_protocol, test_1k_connections):
         print("==", t.__name__); t(srv)
     srv.stop()
-    for t in (test_conn_cap, test_slow_reader):
+    for t in (test_ttl, test_mem_limit_small, test_write_flood, test_conn_cap, test_slow_reader):
         print("==", t.__name__); t()
     print("FAILED" if failures else "all functional tests passed")
     sys.exit(1 if failures else 0)

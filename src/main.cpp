@@ -1,4 +1,6 @@
+#include <malloc.h>
 #include <signal.h>
+#include <sys/random.h>
 #include <sys/resource.h>
 
 #include <charconv>
@@ -27,7 +29,7 @@ bool parse_num(const char* s, T& out) {
 }
 
 int usage() {
-  std::fputs("usage: kvx [--bind IPV4] [--port N] [--max-conns N] [--idle-ms N]\n", stderr);
+  std::fputs("usage: kvx [--bind IPV4] [--port N] [--max-conns N] [--idle-ms N] [--mem-mb N]\n", stderr);
   return 2;
 }
 
@@ -35,6 +37,7 @@ int usage() {
 
 int main(int argc, char** argv) {
   kvx::Options opt;
+  size_t mem_mb = 256;
   for (int i = 1; i < argc; i += 2) {
     std::string_view k = argv[i];
     if (i + 1 >= argc) return usage();
@@ -42,9 +45,14 @@ int main(int argc, char** argv) {
     if (k == "--bind") { opt.bind = argv[i + 1]; ok = true; }
     else if (k == "--port") ok = parse_num(argv[i + 1], opt.port);
     else if (k == "--max-conns") ok = parse_num(argv[i + 1], opt.max_conns) && opt.max_conns > 0;
+    else if (k == "--mem-mb") ok = parse_num(argv[i + 1], mem_mb) && mem_mb >= 1 && mem_mb <= (1u << 20);
     else if (k == "--idle-ms") ok = parse_num(argv[i + 1], opt.idle_ms) && opt.idle_ms > 0;
     if (!ok) return usage();
   }
+
+  // Fixed mmap threshold: big values and buffers are returned to
+  // the OS on free, which keeps RSS close to the accounted memory under churn.
+  mallopt(M_MMAP_THRESHOLD, 128 * 1024);
 
   // Every connection costs one fd; raise the soft limit to the hard limit if needed.
   rlimit rl{};
@@ -59,7 +67,13 @@ int main(int argc, char** argv) {
   }
 
   try {
-    kvx::Store store;
+    kvx::StoreConfig sc;
+    sc.mem_limit = mem_mb << 20;
+    if (getrandom(&sc.seed, sizeof sc.seed, 0) != static_cast<ssize_t>(sizeof sc.seed)) {
+      KVX_WARN("getrandom failed");
+      return 1;
+    }
+    kvx::Store store(sc);
     kvx::Metrics metrics;
     kvx::EventLoop loop(opt, store, metrics);
     g_stop_fd = loop.stop_fd();

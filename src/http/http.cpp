@@ -124,6 +124,7 @@ void append_response(std::string& out, int status, std::string_view body, bool k
     case 405: reason = "Method Not Allowed"; break;
     case 413: reason = "Content Too Large"; break;
     case 431: reason = "Request Header Fields Too Large"; break;
+    case 500: reason = "Internal Server Error"; break;
     case 501: reason = "Not Implemented"; break;
     case 503: reason = "Service Unavailable"; break;
     default: break;
