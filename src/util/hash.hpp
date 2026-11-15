@@ -5,8 +5,7 @@
 
 namespace kvx {
 
-// Seeded 64-bit multiply-mix hash (wyhash-style). Seeded so bucket placement is not
-// predictable from outside; the seed will live in META (M4) to stay stable across restarts.
+// Seeded 64-bit multiply-mix hash (wyhash-style). 
 inline uint64_t mix64(uint64_t a, uint64_t b) {
   __uint128_t r = static_cast<__uint128_t>(a) * b;
   return static_cast<uint64_t>(r) ^ static_cast<uint64_t>(r >> 64);

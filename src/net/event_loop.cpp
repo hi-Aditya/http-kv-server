@@ -239,8 +239,6 @@ bool EventLoop::flush(Conn& c) {
 }
 
 void EventLoop::finish(Conn& c) {
-  // Alternate parse and flush: an immediate flush may drain output below the high-water
-  // mark with no EPOLLOUT to follow, so leftover pipelined requests must be resumed here.
   for (;;) {
     bool progressed = process(c);
     if (!flush(c)) return close_conn(c);

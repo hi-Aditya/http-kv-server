@@ -100,9 +100,6 @@ bool Store::del(std::string_view key, int64_t now) {
   return live;
 }
 
-// CLOCK over buckets: the hand clears reference bits and evicts the first entry whose bit is
-// already clear. Expired entries are dropped on sight. Two laps always find a victim if any
-// unprotected entry exists. Frees at least one entry per true return.
 bool Store::evict_one(const Entry* protect, int64_t now) {
   for (size_t step = 0; step < 2 * nbuckets_; ++step) {
     Entry** pp = &buckets_[hand_];
@@ -146,8 +143,6 @@ PutResult Store::put(std::string_view key, std::string_view value, int64_t ttl_m
 
   while (used_ - old_cost + cost > limit_)
     if (!evict_one(old, now)) return PutResult::NoMemory;
-  // Request the whole size class (cost - 8 B chunk header): a later same-class overwrite then
-  // stays within the requested size, which sanitizers (and other allocators) require.
   auto* e = static_cast<Entry*>(std::malloc(cost - 8));
   if (!e) return PutResult::NoMemory;
   e->hash = h;

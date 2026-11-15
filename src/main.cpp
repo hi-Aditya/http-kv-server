@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
     if (!ok) return usage();
   }
 
-  // Fixed mmap threshold (disables glibc's dynamic one): big values and buffers are returned to
+  // Fixed mmap threshold: big values and buffers are returned to
   // the OS on free, which keeps RSS close to the accounted memory under churn.
   mallopt(M_MMAP_THRESHOLD, 128 * 1024);
 

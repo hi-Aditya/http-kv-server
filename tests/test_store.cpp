@@ -1,4 +1,3 @@
-// Store unit tests: deterministic (fixed seeds, caller-supplied clock), checked against a model.
 #include <cstdio>
 #include <optional>
 #include <random>
@@ -30,8 +29,6 @@ static void basics() {
   CHECK(s.stats().keys == 1 && s.check());
 }
 
-// Random ops vs std::unordered_map. Without pressure the two must agree exactly; under a
-// tiny cap the store may only hold a subset, but every value it returns must be the latest.
 static void differential(size_t limit, bool pressure) {
   Store s = make(limit);
   std::unordered_map<std::string, std::string> model;
@@ -71,8 +68,6 @@ static void differential(size_t limit, bool pressure) {
   }
 }
 
-// CLOCK second chance: keys touched between inserts survive a flood many times the capacity;
-// without touches the same keys do not.
 static size_t hot_survivors(bool touch) {
   Store s = make(512 * 1024);
   const std::string v(100, 'v');

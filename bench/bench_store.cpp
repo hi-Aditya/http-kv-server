@@ -1,9 +1,4 @@
 // Store micro-benchmark: kvx::Store vs std::unordered_map<string,string>, single thread.
-//   cmake --preset release && cmake --build --preset release --target bench_store
-//   taskset -c 2 build/release/bench_store [N=1000000] [value_bytes=64] [reps=5] | tee bench/results/store.csv
-// Pin the CPU, set the governor to `performance`, close other work. Output is CSV; the median of
-// `reps` fresh runs is reported. `kvx-evict` caps memory at half the data so inserts evict
-// (its heap_bytes_per_key divides by keys inserted, not keys retained: not comparable).
 #include <malloc.h>
 
 #include <algorithm>

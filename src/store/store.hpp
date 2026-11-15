@@ -12,9 +12,6 @@ struct StoreConfig {
 
 enum class PutResult { Created, Replaced, TooLarge, NoMemory };
 
-// Chained hash table with intrusive entries, CLOCK eviction, hard memory cap and TTL.
-// Single-threaded: in M3 each shard thread owns one Store. All times are unix ms,
-// passed in by the caller (no clock reads here, so tests are deterministic).
 class Store {
  public:
   struct Stats {
@@ -32,12 +29,10 @@ class Store {
   // ttl_ms == 0: no expiry (an overwrite replaces any previous TTL). May evict other entries.
   PutResult put(std::string_view key, std::string_view value, int64_t ttl_ms, int64_t now_ms);
   bool del(std::string_view key, int64_t now_ms);
-  // Active expiry: scan up to max_buckets buckets from a rotating cursor, drop expired entries.
   size_t sweep(int64_t now_ms, size_t max_buckets);
 
   Stats stats() const;
   bool check(size_t* max_chain = nullptr) const;  // walks the whole table; for tests
-  // Accounted bytes of one entry: glibc malloc chunk size for header + key + value.
   static size_t entry_cost(size_t klen, size_t vlen);
 
  private:
